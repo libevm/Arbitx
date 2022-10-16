@@ -15,7 +15,6 @@ code {
 }
 
 .tree {
-  word-wrap: break-word;
   font-family: "Courier New", Courier, monospace;
   font-weight: bold;
   font-size: 14px;

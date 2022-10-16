@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Fragment } from "react";
 import { ethers } from "ethers";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { useParams } from "react-router-dom";
@@ -11,6 +11,11 @@ import {
   Typography,
   Tooltip,
   CircularProgress,
+  TableRow,
+  Table,
+  TableCell,
+  TableHead,
+  TableBody,
 } from "@mui/material";
 
 import ERC20Abi from "./abi/ERC20.json";
@@ -35,9 +40,10 @@ const ABIS = [
 // States
 const TX_DECODING_STATE = {
   RETRIEVING_TRACE: 0, // Getting trace from quick node
-  RETRIEVING_FUNC_SIG: 1, // Getting function signatures from 4byte
-  RETRIEVING_CONTRACT_NAME: 2, // Getting contract names
-  DONE: 3, // We good
+  RETRIEVING_STATE_CHANGES: 1, // Getting state changes
+  RETRIEVING_FUNC_SIG: 2, // Getting function signatures from 4byte
+  RETRIEVING_CONTRACT_NAME: 3, // Getting contract names
+  DONE: 4, // We good
 };
 
 // Default decoder with common abis
@@ -233,6 +239,7 @@ function App() {
   const [parsed, setIsParsed] = useState(false);
   const [decoder, setDecoder] = useState(null);
   const [callData, setCallData] = useState(null);
+  const [stateDiff, setStateDiff] = useState(null);
   const [isValidTxHash, setIsValidTxHash] = useState(true);
   const [decodingState, setDecodingState] = useState(null);
   const { txhash } = useParams();
@@ -257,6 +264,95 @@ function App() {
       setIsValidTxHash(false);
       return;
     }
+
+    setDecodingState(TX_DECODING_STATE.RETRIEVING_STATE_CHANGES);
+
+    // State changes
+    const stateChangeTrace = await provider
+      .send("debug_traceTransaction", [
+        txhash,
+        {
+          tracer: `{
+                data: [],
+                fault: function(log) {},
+                step: function(log) {
+                    var s = log.op.toString();
+                    if(s == "SSTORE") {
+                        var myStack = [];
+                        var stackLength = log.stack.length();
+                        for (var i = 0; i < 2; i++) {
+                            myStack.push(log.stack.peek(i));
+                        }
+                        
+                        var offset = parseInt(myStack[stackLength - 1]);
+                        var length = parseInt(myStack[stackLength - 2]);
+                        this.data.push({
+                            op: s,
+                            address: log.contract.getAddress(),
+                            caller: log.contract.getCaller(),
+                            stack: myStack,
+                            memory: log.memory.slice(offset, offset + length),
+                        }); 
+                    }
+                },
+                result: function() { return this.data; }}
+            `,
+          //   disableStack: true,
+          //   disableMemory: true,
+          //   disableStorage: true,
+        },
+      ])
+      .catch(() => null);
+
+    // Hexlify trace
+    const stateChangeHexTrace = stateChangeTrace.map((x) => {
+      const newStack = x.stack.map((x) =>
+        ethers.utils.hexlify(
+          ethers.utils.zeroPad(ethers.BigNumber.from(x).toHexString(), 32)
+        )
+      );
+
+      const hexEncode = (acc, x) => {
+        let h = parseInt(x.toString()).toString(16);
+        if (h.length !== 2) {
+          h = "0" + h;
+        }
+        return acc + h;
+      };
+
+      const objToArr = (obj) =>
+        Object.keys(obj)
+          .map((x) => parseInt(x))
+          .sort((a, b) => a - b)
+          .map((x) => obj[x.toString()]);
+
+      let newData = "0x" + objToArr(x.memory).reduce(hexEncode, "");
+      let newAddress = "0x" + objToArr(x.address).reduce(hexEncode, "");
+      let newCaller = "0x" + objToArr(x.caller).reduce(hexEncode, "");
+
+      return {
+        op: x.op,
+        address: newAddress,
+        caller: newCaller,
+        stack: newStack,
+        data: newData,
+      };
+    });
+
+    // Merge all the state differences into a key value store
+    const stateDiffKV = stateChangeHexTrace.reduce((acc, x) => {
+      if (!acc[x.address]) {
+        acc[x.address] = {};
+      }
+
+      acc[x.address][x.stack[0]] = x.stack[1];
+
+      return acc;
+    }, {});
+
+    setStateDiff(stateDiffKV);
+
+    console.log("stateDiffKV", stateDiffKV);
 
     setDecodingState(TX_DECODING_STATE.RETRIEVING_FUNC_SIG);
 
@@ -415,7 +511,7 @@ function App() {
             }
             title={
               <Typography variant="h4" component="h4">
-                Transaction Trace
+                Transaction Info
               </Typography>
             }
           />
@@ -426,6 +522,16 @@ function App() {
                 <CircularProgress />
                 <Typography style={{ paddingLeft: "10px" }}>
                   Retrieving stack trace
+                </Typography>
+              </Box>
+            )}
+          {callData === null &&
+            isValidTxHash &&
+            decodingState === TX_DECODING_STATE.RETRIEVING_STATE_CHANGES && (
+              <Box display="flex" alignItems="center">
+                <CircularProgress />
+                <Typography style={{ paddingLeft: "10px" }}>
+                  Locating state changes....
                 </Typography>
               </Box>
             )}
@@ -449,17 +555,105 @@ function App() {
                 </Typography>
               </Box>
             )}
-          {callData === null && !isValidTxHash && "Invalid tx hash provided"}
+          {callData === null &&
+            stateDiff !== null &&
+            !isValidTxHash &&
+            "Invalid tx hash provided"}
           {
-            callData !== null && (
-              <ul className="tree">
-                <li key="root">
-                  <details open>
-                    <summary>[Sender] {callData.from}</summary>
-                    <ul>{StackTraceTreeViewer(callData)}</ul>
-                  </details>
-                </li>
-              </ul>
+            callData !== null && stateDiff !== null && (
+              <>
+                <Typography variant="h5">State Changes</Typography>
+                <Table
+                  sx={{ minWidth: 650 }}
+                  size="small"
+                  style={{ fontFamily: "monospace" }}
+                >
+                  <TableHead>
+                    <TableRow>
+                      <TableCell
+                        style={{
+                          fontFamily: "monospace",
+                        }}
+                      >
+                        Address
+                      </TableCell>
+                      <TableCell
+                        style={{
+                          fontFamily: "monospace",
+                        }}
+                      >
+                        Key -&gt; Value
+                      </TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {Object.keys(stateDiff).map((address) => {
+                      const keys = Object.keys(stateDiff[address]);
+
+                      return (
+                        <Fragment>
+                          <TableRow style={{ width: "100%" }}>
+                            <TableCell
+                              style={{
+                                fontFamily: "monospace",
+                                fontSize: "12px",
+                              }}
+                              rowSpan={stateDiff[address].length + 1}
+                            >
+                              {address}
+                            </TableCell>
+                            {keys.map((k) => (
+                              <TableRow
+                                style={{
+                                  width: "100%",
+                                }}
+                              >
+                                <TableCell
+                                  style={{
+                                    fontFamily: "monospace",
+                                    fontSize: "12px",
+                                  }}
+                                  sx={{ minWidth: "50%" }}
+                                >
+                                  {k}
+                                </TableCell>
+                                <TableCell
+                                  style={{
+                                    fontFamily: "monospace",
+                                    fontSize: "12px",
+                                  }}
+                                  sx={{ minWidth: 50 }}
+                                >
+                                  -&gt;
+                                </TableCell>
+                                <TableCell
+                                  style={{
+                                    fontFamily: "monospace",
+                                    fontSize: "12px",
+                                  }}
+                                  sx={{ minWidth: "50%" }}
+                                >
+                                  {stateDiff[address][k]}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableRow>
+                        </Fragment>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+                <div style={{ margin: "10px" }} />
+                <Typography variant="h5">Call Trace</Typography>
+                <ul className="tree">
+                  <li key="root">
+                    <details open>
+                      <summary>[Sender] {callData.from}</summary>
+                      <ul>{StackTraceTreeViewer(callData)}</ul>
+                    </details>
+                  </li>
+                </ul>
+              </>
             )
             // https://iamkate.com/code/tree-views/
           }
