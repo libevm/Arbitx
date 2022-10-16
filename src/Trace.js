@@ -305,7 +305,7 @@ function App() {
       .catch(() => null);
 
     // Hexlify trace
-    const stateChangeHexTrace = stateChangeTrace.map((x) => {
+    const stateChangeHexTrace = (stateChangeTrace || []).map((x) => {
       const newStack = x.stack.map((x) =>
         ethers.utils.hexlify(
           ethers.utils.zeroPad(ethers.BigNumber.from(x).toHexString(), 32)
@@ -559,100 +559,104 @@ function App() {
           {callData !== null && stateDiff !== null && (
             <>
               <Typography variant="h5">State Changes</Typography>
-              <Table
-                sx={{ minWidth: 650 }}
-                size="small"
-                style={{ fontFamily: "monospace" }}
-              >
-                <TableHead>
-                  <TableRow>
-                    <TableCell
-                      style={{
-                        fontFamily: "monospace",
-                      }}
-                    >
-                      Address
-                    </TableCell>
-                    <TableCell
-                      style={{
-                        fontFamily: "monospace",
-                      }}
-                    >
-                      Key -&gt; Value
-                    </TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {Object.keys(stateDiff).map((address) => {
-                    const keys = Object.keys(stateDiff[address]);
+              {Object.keys(stateDiff).length === 0 ? (
+                <>No state changes found</>
+              ) : (
+                <Table
+                  sx={{ minWidth: 650 }}
+                  size="small"
+                  style={{ fontFamily: "monospace" }}
+                >
+                  <TableHead>
+                    <TableRow>
+                      <TableCell
+                        style={{
+                          fontFamily: "monospace",
+                        }}
+                      >
+                        Address
+                      </TableCell>
+                      <TableCell
+                        style={{
+                          fontFamily: "monospace",
+                        }}
+                      >
+                        Key -&gt; Value
+                      </TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {Object.keys(stateDiff).map((address) => {
+                      const keys = Object.keys(stateDiff[address]);
 
-                    return (
-                      <Fragment>
-                        <TableRow style={{ width: "100%" }}>
-                          <TableCell
-                            style={{
-                              fontFamily: "monospace",
-                              fontSize: "12px",
-                            }}
-                            rowSpan={stateDiff[address].length + 1}
-                          >
-                            {knownContractAddresses[address.toLowerCase()] ? (
-                              <Tooltip title={address} placement="top-start">
+                      return (
+                        <Fragment>
+                          <TableRow style={{ width: "100%" }}>
+                            <TableCell
+                              style={{
+                                fontFamily: "monospace",
+                                fontSize: "12px",
+                              }}
+                              rowSpan={stateDiff[address].length + 1}
+                            >
+                              {knownContractAddresses[address.toLowerCase()] ? (
+                                <Tooltip title={address} placement="top-start">
+                                  <a
+                                    href={`https://arbiscan.io//address/${address}`}
+                                  >
+                                    {knownContractAddresses[address]}
+                                  </a>
+                                </Tooltip>
+                              ) : (
                                 <a
                                   href={`https://arbiscan.io//address/${address}`}
                                 >
-                                  {knownContractAddresses[address]}
+                                  {address}
                                 </a>
-                              </Tooltip>
-                            ) : (
-                              <a
-                                href={`https://arbiscan.io//address/${address}`}
-                              >
-                                {address}
-                              </a>
-                            )}
-                          </TableCell>
-                          {keys.map((k) => (
-                            <TableRow
-                              style={{
-                                width: "100%",
-                              }}
-                            >
-                              <TableCell
+                              )}
+                            </TableCell>
+                            {keys.map((k) => (
+                              <TableRow
                                 style={{
-                                  fontFamily: "monospace",
-                                  fontSize: "12px",
+                                  width: "100%",
                                 }}
-                                sx={{ minWidth: "50%" }}
                               >
-                                {k}
-                              </TableCell>
-                              <TableCell
-                                style={{
-                                  fontFamily: "monospace",
-                                  fontSize: "12px",
-                                }}
-                                sx={{ minWidth: 50 }}
-                              >
-                                -&gt;
-                              </TableCell>
-                              <TableCell
-                                style={{
-                                  fontFamily: "monospace",
-                                  fontSize: "12px",
-                                }}
-                                sx={{ minWidth: "50%" }}
-                              >
-                                {stateDiff[address][k]}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableRow>
-                      </Fragment>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                                <TableCell
+                                  style={{
+                                    fontFamily: "monospace",
+                                    fontSize: "12px",
+                                  }}
+                                  sx={{ minWidth: "50%" }}
+                                >
+                                  {k}
+                                </TableCell>
+                                <TableCell
+                                  style={{
+                                    fontFamily: "monospace",
+                                    fontSize: "12px",
+                                  }}
+                                  sx={{ minWidth: 50 }}
+                                >
+                                  -&gt;
+                                </TableCell>
+                                <TableCell
+                                  style={{
+                                    fontFamily: "monospace",
+                                    fontSize: "12px",
+                                  }}
+                                  sx={{ minWidth: "50%" }}
+                                >
+                                  {stateDiff[address][k]}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableRow>
+                        </Fragment>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
               <div style={{ margin: "10px" }} />
               <Typography variant="h5">Call Trace</Typography>
               <ul className="tree">
