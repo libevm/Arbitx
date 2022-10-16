@@ -33,7 +33,7 @@ function App() {
             }
             title={
               <Typography variant="h4" component="h4">
-                Lentils.farms - Arbitrium Transaction Tracer
+                ArbiTx - Arbitrium Transaction Tracer
               </Typography>
             }
           />
