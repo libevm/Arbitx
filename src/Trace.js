@@ -17,7 +17,7 @@ import {
   TableHead,
   TableBody,
 } from "@mui/material";
-
+import styled from "styled-components";
 import ERC20Abi from "./abi/ERC20.json";
 import ERC721Abi from "./abi/ERC721.json";
 import SeaportRouterAbi from "./abi/SeaportRouter.json";
@@ -26,7 +26,16 @@ import UniswapV3Abi from "./abi/UniswapV3.json";
 
 import "./index.css";
 import logo from "./logo.png";
-import { provider, sleep } from "./constants";
+import { ERC20, provider, sleep } from "./constants";
+
+const TableCellMono = styled(TableCell)`
+  font-family: monospace;
+  font-size: 12px;
+`;
+
+// Transfer function topic
+const TRANSFER_TOPIC_HASH =
+  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef".toLowerCase();
 
 // Common ABIs
 const ABIS = [
@@ -41,9 +50,10 @@ const ABIS = [
 const TX_DECODING_STATE = {
   RETRIEVING_TRACE: 0, // Getting trace from quick node
   RETRIEVING_STATE_CHANGES: 1, // Getting state changes
-  RETRIEVING_FUNC_SIG: 2, // Getting function signatures from 4byte
-  RETRIEVING_CONTRACT_NAME: 3, // Getting contract names
-  DONE: 4, // We good
+  RETRIEVING_TRANSFER_EVENTS: 2, // Getting transfer events
+  RETRIEVING_FUNC_SIG: 3, // Getting function signatures from 4byte
+  RETRIEVING_CONTRACT_NAME: 4, // Getting contract names
+  DONE: 5, // We good
 };
 
 // Default decoder with common abis
@@ -232,6 +242,11 @@ function App() {
     "contractAddresses",
     {}
   );
+  const [tokenNames, setTokenNames] = useLocalStorage("tokenNames", {});
+  const [tokenDecimals, setTokenDecimals] = useLocalStorage(
+    "tokenDecimals",
+    {}
+  );
   const [customTextSignatures, setCustomTextSignatures] = useLocalStorage(
     "textSignatures",
     []
@@ -240,6 +255,7 @@ function App() {
   const [decoder, setDecoder] = useState(null);
   const [callData, setCallData] = useState(null);
   const [stateDiff, setStateDiff] = useState(null);
+  const [transferEvents, setTransferEvents] = useState(null);
   const [isValidTxHash, setIsValidTxHash] = useState(true);
   const [decodingState, setDecodingState] = useState(null);
   const { txhash } = useParams();
@@ -350,6 +366,140 @@ function App() {
       return acc;
     }, {});
 
+    setDecodingState(TX_DECODING_STATE.RETRIEVING_TRANSFER_EVENTS);
+
+    // Extract token transfer events
+    const log3Trace = await provider.send("debug_traceTransaction", [
+      txhash,
+      {
+        // Tracer we only care about LOGX
+        tracer: `{
+                  data: [],
+                  fault: function(log) {},
+                  step: function(log) {
+                      var s = log.op.toString();
+                      if(s == "LOG3") {
+                          var myStack = [];
+                          var stackLength = log.stack.length();
+                          for (var i = 0; i < stackLength; i++) {
+                              myStack.unshift(log.stack.peek(i));
+                          }
+                          
+                          var offset = parseInt(myStack[stackLength - 1]);
+                          var length = parseInt(myStack[stackLength - 2]);
+                          this.data.push({
+                              op: s,
+                              address: log.contract.getAddress(),
+                              caller: log.contract.getCaller(),
+                              stack: myStack,
+                              memory: log.memory.slice(offset, offset + length),
+                          }); 
+                      }
+                  },
+                  result: function() { return this.data; }}
+              `,
+        // disableStack: false,
+        // disableMemory: false,
+        // disableStorage: true
+      },
+    ]);
+
+    const log3TraceHex = (log3Trace || []).map((x) => {
+      const newStack = x.stack.map((x) =>
+        ethers.utils.hexlify(
+          ethers.utils.zeroPad(ethers.BigNumber.from(x).toHexString(), 32)
+        )
+      );
+
+      const hexEncode = (acc, x) => {
+        let h = parseInt(x.toString()).toString(16);
+        if (h.length !== 2) {
+          h = "0" + h;
+        }
+        return acc + h;
+      };
+
+      const objToArr = (obj) =>
+        Object.keys(obj)
+          .map((x) => parseInt(x))
+          .sort((a, b) => a - b)
+          .map((x) => obj[x.toString()]);
+
+      let newData = "0x" + objToArr(x.memory).reduce(hexEncode, "");
+      let newAddress = "0x" + objToArr(x.address).reduce(hexEncode, "");
+      let newCaller = "0x" + objToArr(x.caller).reduce(hexEncode, "");
+
+      return {
+        op: x.op,
+        address: newAddress,
+        caller: newCaller,
+        stack: newStack,
+        data: newData,
+      };
+    });
+
+    const erc20TransferEvents = log3TraceHex
+      .filter((x) => {
+        return x.stack.slice(-3)[0].toLowerCase() === TRANSFER_TOPIC_HASH;
+      })
+      .reduce((acc, x) => {
+        if (!acc[x.address]) {
+          acc[x.address] = [];
+        }
+
+        acc[x.address].push({
+          from: "0x" + x.stack.slice(-4)[0].slice(26),
+          to: "0x" + x.stack.slice(-5)[0].slice(26),
+          amount: ethers.BigNumber.from(x.stack.slice(-6)[0]),
+        });
+
+        return acc;
+      }, {});
+
+    // Get tokens names and decimals
+    const curTokenNames = (
+      await Promise.all(
+        Object.keys(erc20TransferEvents)
+          .filter((x) => !tokenNames[x])
+          .map((x) =>
+            ERC20.attach(x)
+              .symbol()
+              .then((s) => [x, s])
+              .catch(() => null)
+          )
+      )
+    )
+      .filter((x) => x !== null)
+      .reduce((acc, x) => {
+        return {
+          ...acc,
+          [x[0].toLowerCase()]: x[1],
+        };
+      }, {});
+
+    const curTokenDecimals = (
+      await Promise.all(
+        Object.keys(erc20TransferEvents)
+          .filter((x) => !tokenDecimals[x])
+          .map((x) =>
+            ERC20.attach(x)
+              .decimals()
+              .then((d) => [x, d])
+              .catch(() => null)
+          )
+      )
+    )
+      .filter((x) => x !== null)
+      .reduce((acc, x) => {
+        return {
+          ...acc,
+          [x[0].toLowerCase()]: x[1],
+        };
+      }, {});
+
+    console.log("curTokenNames", curTokenNames);
+    console.log("curTokenDecimals", curTokenDecimals);
+
     setDecodingState(TX_DECODING_STATE.RETRIEVING_FUNC_SIG);
 
     const unknown4s = getUniqueUnkownFunctionSignatures(
@@ -457,6 +607,16 @@ function App() {
     );
 
     // Finally set all the call data after we've parsed all the
+    setTokenDecimals({
+      ...tokenDecimals,
+      ...curTokenDecimals,
+    });
+    setTokenNames({
+      ...tokenNames,
+      ...curTokenNames,
+    });
+    console.log("transferEvents", erc20TransferEvents);
+    setTransferEvents(erc20TransferEvents);
     setStateDiff(stateDiffKV);
     setCallData(newStackTrace);
     setDecoder(newDecoder);
@@ -469,6 +629,10 @@ function App() {
     decoder,
     knownContractAddresses,
     setCustomTextSignatures,
+    setTokenDecimals,
+    setTokenNames,
+    tokenDecimals,
+    tokenNames,
     txhash,
   ]);
 
@@ -514,75 +678,38 @@ function App() {
           />
           {callData === null &&
             isValidTxHash &&
-            decodingState === TX_DECODING_STATE.RETRIEVING_TRACE && (
+            decodingState !== TX_DECODING_STATE.DONE && (
               <Box display="flex" alignItems="center">
                 <CircularProgress />
                 <Typography style={{ paddingLeft: "10px" }}>
-                  Retrieving stack trace
+                  {decodingState === TX_DECODING_STATE.RETRIEVING_TRACE &&
+                    "Retrieving transaction data..."}
+                  {decodingState ===
+                    TX_DECODING_STATE.RETRIEVING_TRANSFER_EVENTS &&
+                    "Detecting transfer events...."}
+                  {decodingState ===
+                    TX_DECODING_STATE.RETRIEVING_STATE_CHANGES &&
+                    "Locating state changes...."}
+                  {decodingState === TX_DECODING_STATE.RETRIEVING_FUNC_SIG &&
+                    "Deriving function signatures...."}
+                  {decodingState ===
+                    TX_DECODING_STATE.RETRIEVING_CONTRACT_NAME &&
+                    "Extracting contract names...."}
                 </Typography>
               </Box>
             )}
-          {callData === null &&
-            isValidTxHash &&
-            decodingState === TX_DECODING_STATE.RETRIEVING_STATE_CHANGES && (
-              <Box display="flex" alignItems="center">
-                <CircularProgress />
-                <Typography style={{ paddingLeft: "10px" }}>
-                  Locating state changes....
-                </Typography>
-              </Box>
-            )}
-          {callData === null &&
-            isValidTxHash &&
-            decodingState === TX_DECODING_STATE.RETRIEVING_FUNC_SIG && (
-              <Box display="flex" alignItems="center">
-                <CircularProgress />
-                <Typography style={{ paddingLeft: "10px" }}>
-                  Deriving function signatures....
-                </Typography>
-              </Box>
-            )}
-          {callData === null &&
-            isValidTxHash &&
-            decodingState === TX_DECODING_STATE.RETRIEVING_CONTRACT_NAME && (
-              <Box display="flex" alignItems="center">
-                <CircularProgress />
-                <Typography style={{ paddingLeft: "10px" }}>
-                  Extracting contract names....
-                </Typography>
-              </Box>
-            )}
-          {callData === null &&
-            stateDiff !== null &&
-            !isValidTxHash &&
-            "Invalid tx hash provided"}
-          {callData !== null && stateDiff !== null && (
+          {callData === null && !isValidTxHash && "Invalid tx hash provided"}
+          {callData !== null && stateDiff !== null && transferEvents !== null && (
             <>
               <Typography variant="h5">State Changes</Typography>
               {Object.keys(stateDiff).length === 0 ? (
                 <>No state changes found</>
               ) : (
-                <Table
-                  sx={{ minWidth: 650 }}
-                  size="small"
-                  style={{ fontFamily: "monospace" }}
-                >
+                <Table sx={{ minWidth: 650 }} size="small">
                   <TableHead>
                     <TableRow>
-                      <TableCell
-                        style={{
-                          fontFamily: "monospace",
-                        }}
-                      >
-                        Address
-                      </TableCell>
-                      <TableCell
-                        style={{
-                          fontFamily: "monospace",
-                        }}
-                      >
-                        Key -&gt; Value
-                      </TableCell>
+                      <TableCellMono>Address</TableCellMono>
+                      <TableCellMono>Key -&gt; Value</TableCellMono>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -592,11 +719,7 @@ function App() {
                       return (
                         <Fragment>
                           <TableRow style={{ width: "100%" }}>
-                            <TableCell
-                              style={{
-                                fontFamily: "monospace",
-                                fontSize: "12px",
-                              }}
+                            <TableCellMono
                               rowSpan={stateDiff[address].length + 1}
                             >
                               {knownContractAddresses[address.toLowerCase()] ? (
@@ -614,40 +737,22 @@ function App() {
                                   {address}
                                 </a>
                               )}
-                            </TableCell>
+                            </TableCellMono>
                             {keys.map((k) => (
                               <TableRow
                                 style={{
                                   width: "100%",
                                 }}
                               >
-                                <TableCell
-                                  style={{
-                                    fontFamily: "monospace",
-                                    fontSize: "12px",
-                                  }}
-                                  sx={{ minWidth: "50%" }}
-                                >
+                                <TableCellMono sx={{ minWidth: "50%" }}>
                                   {k}
-                                </TableCell>
-                                <TableCell
-                                  style={{
-                                    fontFamily: "monospace",
-                                    fontSize: "12px",
-                                  }}
-                                  sx={{ minWidth: 50 }}
-                                >
+                                </TableCellMono>
+                                <TableCellMono sx={{ minWidth: 50 }}>
                                   -&gt;
-                                </TableCell>
-                                <TableCell
-                                  style={{
-                                    fontFamily: "monospace",
-                                    fontSize: "12px",
-                                  }}
-                                  sx={{ minWidth: "50%" }}
-                                >
+                                </TableCellMono>
+                                <TableCellMono sx={{ minWidth: "50%" }}>
                                   {stateDiff[address][k]}
-                                </TableCell>
+                                </TableCellMono>
                               </TableRow>
                             ))}
                           </TableRow>
@@ -658,7 +763,67 @@ function App() {
                 </Table>
               )}
               <div style={{ margin: "10px" }} />
-              <Typography variant="h5">Call Trace</Typography>
+              <Typography variant="h5">ERC20 Transfer Events</Typography>
+              {Object.keys(stateDiff).length === 0 ? (
+                <>No transfer events found</>
+              ) : (
+                <Table sx={{ minWidth: 650 }} size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCellMono>Token</TableCellMono>
+                      <TableCellMono>[Amount] From -&gt; To</TableCellMono>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {Object.keys(transferEvents).map((address) => {
+                      const a = transferEvents[address].map((k) => (
+                        <TableRow
+                          style={{
+                            width: "100%",
+                          }}
+                        >
+                          <TableCellMono>
+                            {tokenNames[address.toLowerCase()] ? (
+                              <Tooltip title={address} placement="top-start">
+                                <a
+                                  href={`https://arbiscan.io//address/${address}`}
+                                >
+                                  {tokenNames[address.toLowerCase()]}
+                                </a>
+                              </Tooltip>
+                            ) : (
+                              <a
+                                href={`https://arbiscan.io//address/${address}`}
+                              >
+                                {address}
+                              </a>
+                            )}
+                          </TableCellMono>
+                          <TableCellMono>
+                            {[
+                              tokenDecimals[address.toLowerCase()]
+                                ? ethers.utils.formatUnits(
+                                    k.amount,
+                                    tokenDecimals[address.toLowerCase()]
+                                  )
+                                : k.amount.toString(),
+                            ]}
+                          </TableCellMono>
+                          <TableCellMono>{k.from}</TableCellMono>
+                          <TableCellMono sx={{ minWidth: 50 }}>
+                            -&gt;
+                          </TableCellMono>
+                          <TableCellMono>{k.to}</TableCellMono>
+                        </TableRow>
+                      ));
+
+                      return a;
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+              <div style={{ margin: "10px" }} />
+              <Typography variant="h5">Execution Trace</Typography>
               <ul className="tree">
                 <li key="root">
                   <details open>
