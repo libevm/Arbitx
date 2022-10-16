@@ -132,7 +132,7 @@ function StackTraceTreeViewer(stackTrace) {
           [{isNaN(prettyGas) ? "0" : prettyGas.toString()}] {prettyValueStr} [
           {type}]{" "}
           <Tooltip title={to} placement="top-start">
-            <a href={`https://optimistic.etherscan.io/address/${to}`}>
+            <a href={`https://arbiscan.io//address/${to}`}>
               {prettyAddress || to}::{prettyInput || input}
             </a>
           </Tooltip>
@@ -350,10 +350,6 @@ function App() {
       return acc;
     }, {});
 
-    setStateDiff(stateDiffKV);
-
-    console.log("stateDiffKV", stateDiffKV);
-
     setDecodingState(TX_DECODING_STATE.RETRIEVING_FUNC_SIG);
 
     const unknown4s = getUniqueUnkownFunctionSignatures(
@@ -461,6 +457,7 @@ function App() {
     );
 
     // Finally set all the call data after we've parsed all the
+    setStateDiff(stateDiffKV);
     setCallData(newStackTrace);
     setDecoder(newDecoder);
     setKnownContractAddresses(newKnownContractAddresses);
@@ -559,104 +556,115 @@ function App() {
             stateDiff !== null &&
             !isValidTxHash &&
             "Invalid tx hash provided"}
-          {
-            callData !== null && stateDiff !== null && (
-              <>
-                <Typography variant="h5">State Changes</Typography>
-                <Table
-                  sx={{ minWidth: 650 }}
-                  size="small"
-                  style={{ fontFamily: "monospace" }}
-                >
-                  <TableHead>
-                    <TableRow>
-                      <TableCell
-                        style={{
-                          fontFamily: "monospace",
-                        }}
-                      >
-                        Address
-                      </TableCell>
-                      <TableCell
-                        style={{
-                          fontFamily: "monospace",
-                        }}
-                      >
-                        Key -&gt; Value
-                      </TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {Object.keys(stateDiff).map((address) => {
-                      const keys = Object.keys(stateDiff[address]);
+          {callData !== null && stateDiff !== null && (
+            <>
+              <Typography variant="h5">State Changes</Typography>
+              <Table
+                sx={{ minWidth: 650 }}
+                size="small"
+                style={{ fontFamily: "monospace" }}
+              >
+                <TableHead>
+                  <TableRow>
+                    <TableCell
+                      style={{
+                        fontFamily: "monospace",
+                      }}
+                    >
+                      Address
+                    </TableCell>
+                    <TableCell
+                      style={{
+                        fontFamily: "monospace",
+                      }}
+                    >
+                      Key -&gt; Value
+                    </TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {Object.keys(stateDiff).map((address) => {
+                    const keys = Object.keys(stateDiff[address]);
 
-                      return (
-                        <Fragment>
-                          <TableRow style={{ width: "100%" }}>
-                            <TableCell
-                              style={{
-                                fontFamily: "monospace",
-                                fontSize: "12px",
-                              }}
-                              rowSpan={stateDiff[address].length + 1}
-                            >
-                              {address}
-                            </TableCell>
-                            {keys.map((k) => (
-                              <TableRow
-                                style={{
-                                  width: "100%",
-                                }}
+                    return (
+                      <Fragment>
+                        <TableRow style={{ width: "100%" }}>
+                          <TableCell
+                            style={{
+                              fontFamily: "monospace",
+                              fontSize: "12px",
+                            }}
+                            rowSpan={stateDiff[address].length + 1}
+                          >
+                            {knownContractAddresses[address.toLowerCase()] ? (
+                              <Tooltip title={address} placement="top-start">
+                                <a
+                                  href={`https://arbiscan.io//address/${address}`}
+                                >
+                                  {knownContractAddresses[address]}
+                                </a>
+                              </Tooltip>
+                            ) : (
+                              <a
+                                href={`https://arbiscan.io//address/${address}`}
                               >
-                                <TableCell
-                                  style={{
-                                    fontFamily: "monospace",
-                                    fontSize: "12px",
-                                  }}
-                                  sx={{ minWidth: "50%" }}
-                                >
-                                  {k}
-                                </TableCell>
-                                <TableCell
-                                  style={{
-                                    fontFamily: "monospace",
-                                    fontSize: "12px",
-                                  }}
-                                  sx={{ minWidth: 50 }}
-                                >
-                                  -&gt;
-                                </TableCell>
-                                <TableCell
-                                  style={{
-                                    fontFamily: "monospace",
-                                    fontSize: "12px",
-                                  }}
-                                  sx={{ minWidth: "50%" }}
-                                >
-                                  {stateDiff[address][k]}
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableRow>
-                        </Fragment>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-                <div style={{ margin: "10px" }} />
-                <Typography variant="h5">Call Trace</Typography>
-                <ul className="tree">
-                  <li key="root">
-                    <details open>
-                      <summary>[Sender] {callData.from}</summary>
-                      <ul>{StackTraceTreeViewer(callData)}</ul>
-                    </details>
-                  </li>
-                </ul>
-              </>
-            )
-            // https://iamkate.com/code/tree-views/
-          }
+                                {address}
+                              </a>
+                            )}
+                          </TableCell>
+                          {keys.map((k) => (
+                            <TableRow
+                              style={{
+                                width: "100%",
+                              }}
+                            >
+                              <TableCell
+                                style={{
+                                  fontFamily: "monospace",
+                                  fontSize: "12px",
+                                }}
+                                sx={{ minWidth: "50%" }}
+                              >
+                                {k}
+                              </TableCell>
+                              <TableCell
+                                style={{
+                                  fontFamily: "monospace",
+                                  fontSize: "12px",
+                                }}
+                                sx={{ minWidth: 50 }}
+                              >
+                                -&gt;
+                              </TableCell>
+                              <TableCell
+                                style={{
+                                  fontFamily: "monospace",
+                                  fontSize: "12px",
+                                }}
+                                sx={{ minWidth: "50%" }}
+                              >
+                                {stateDiff[address][k]}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableRow>
+                      </Fragment>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+              <div style={{ margin: "10px" }} />
+              <Typography variant="h5">Call Trace</Typography>
+              <ul className="tree">
+                <li key="root">
+                  <details open>
+                    <summary>[Sender] {callData.from}</summary>
+                    <ul>{StackTraceTreeViewer(callData)}</ul>
+                  </details>
+                </li>
+              </ul>
+            </>
+          )}
         </Grid>
         <Grid item xs={1}></Grid>
       </Grid>
