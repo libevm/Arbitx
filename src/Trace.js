@@ -3,12 +3,14 @@ import { ethers } from "ethers";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { useParams } from "react-router-dom";
 import {
+  Box,
   Avatar,
   CardHeader,
   Link,
   Grid,
   Typography,
   Tooltip,
+  CircularProgress,
 } from "@mui/material";
 
 import ERC20Abi from "./abi/ERC20.json";
@@ -29,6 +31,14 @@ const ABIS = [
   ...UniswapV2SwapRouterAbi,
   ...UniswapV3Abi,
 ];
+
+// States
+const TX_DECODING_STATE = {
+  RETRIEVING_TRACE: 0, // Getting trace from quick node
+  RETRIEVING_FUNC_SIG: 1, // Getting function signatures from 4byte
+  RETRIEVING_CONTRACT_NAME: 2, // Getting contract names
+  DONE: 3, // We good
+};
 
 // Default decoder with common abis
 let defaultDecoder = new ethers.utils.Interface(ABIS);
@@ -224,6 +234,7 @@ function App() {
   const [decoder, setDecoder] = useState(null);
   const [callData, setCallData] = useState(null);
   const [isValidTxHash, setIsValidTxHash] = useState(true);
+  const [decodingState, setDecodingState] = useState(null);
   const { txhash } = useParams();
 
   const getStackTrace = useCallback(async () => {
@@ -236,6 +247,8 @@ function App() {
       return;
     }
 
+    setDecodingState(TX_DECODING_STATE.RETRIEVING_TRACE);
+
     const stackTraceData = await provider
       .send("debug_traceTransaction", [txhash, { tracer: "callTracer" }])
       .catch(() => null);
@@ -244,6 +257,8 @@ function App() {
       setIsValidTxHash(false);
       return;
     }
+
+    setDecodingState(TX_DECODING_STATE.RETRIEVING_FUNC_SIG);
 
     const unknown4s = getUniqueUnkownFunctionSignatures(
       decoder,
@@ -280,6 +295,8 @@ function App() {
       ...decoder.format(),
       ...textSignatures,
     ]);
+
+    setDecodingState(TX_DECODING_STATE.RETRIEVING_CONTRACT_NAME);
 
     // Attempt to get contract address name, rate limited to 5 every 1 second
     const unknownAddresses = getUniqueUnknownAddresses(
@@ -352,6 +369,7 @@ function App() {
     setDecoder(newDecoder);
     setKnownContractAddresses(newKnownContractAddresses);
     setCustomTextSignatures(newCustomTextSignatures);
+    setDecodingState(TX_DECODING_STATE.DONE);
   }, [
     setKnownContractAddresses,
     customTextSignatures,
@@ -401,7 +419,36 @@ function App() {
               </Typography>
             }
           />
-          {callData === null && isValidTxHash && "Loading..."}
+          {callData === null &&
+            isValidTxHash &&
+            decodingState === TX_DECODING_STATE.RETRIEVING_TRACE && (
+              <Box display="flex" alignItems="center">
+                <CircularProgress />
+                <Typography style={{ paddingLeft: "10px" }}>
+                  Retrieving stack trace
+                </Typography>
+              </Box>
+            )}
+          {callData === null &&
+            isValidTxHash &&
+            decodingState === TX_DECODING_STATE.RETRIEVING_FUNC_SIG && (
+              <Box display="flex" alignItems="center">
+                <CircularProgress />
+                <Typography style={{ paddingLeft: "10px" }}>
+                  Deriving function signatures....
+                </Typography>
+              </Box>
+            )}
+          {callData === null &&
+            isValidTxHash &&
+            decodingState === TX_DECODING_STATE.RETRIEVING_CONTRACT_NAME && (
+              <Box display="flex" alignItems="center">
+                <CircularProgress />
+                <Typography style={{ paddingLeft: "10px" }}>
+                  Extracting contract names....
+                </Typography>
+              </Box>
+            )}
           {callData === null && !isValidTxHash && "Invalid tx hash provided"}
           {
             callData !== null && (

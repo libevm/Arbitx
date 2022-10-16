@@ -4,7 +4,6 @@ import {
   CardHeader,
   Link,
   Grid,
-  Paper,
   TextField,
   Typography,
   Button,
@@ -38,35 +37,34 @@ function App() {
             }
           />
           <br />
-          <Paper style={{ padding: "20px" }} variant="outlined">
-            <Typography variant="h5" component="h5">
-              Transaction Tracer
-            </Typography>
-            <br />
-            <TextField
-              error={invalidHash}
-              helperText={invalidHash && "Invalid tx hash"}
-              onChange={(e) => setTxHash(e.target.value)}
-              value={txHash}
-              fullWidth
-              label="Arbitrum tx hash"
-              id="fullWidth"
-            />
-            <br />
-            <br />
-            <Button
-              onClick={() => {
-                if (txHash.length !== 66 && txHash.slice(0, 2) !== "0x") {
-                  setInvalidHash(true);
-                  return;
-                }
-                navigate(`/tx/${txHash}`);
-              }}
-              variant="contained"
-            >
-              Trace Tx
-            </Button>
-          </Paper>
+          <Typography variant="h5" component="h5">
+            Transaction Tracer
+          </Typography>
+          <br />
+          <TextField
+            error={invalidHash}
+            helperText={invalidHash && "Invalid tx hash"}
+            onChange={(e) => setTxHash(e.target.value)}
+            value={txHash}
+            fullWidth
+            label="Arbitrum tx hash"
+            id="fullWidth"
+          />
+          <br />
+          <br />
+          <Button
+            style={{ width: "100%" }}
+            variant="outlined"
+            onClick={() => {
+              if (txHash.length !== 66 && txHash.slice(0, 2) !== "0x") {
+                setInvalidHash(true);
+                return;
+              }
+              navigate(`/tx/${txHash}`);
+            }}
+          >
+            Trace Tx
+          </Button>
         </Grid>
         <Grid item xs={1}></Grid>
       </Grid>
